@@ -1,26 +1,36 @@
-import React from 'react';
-import logo from './logo.svg';
-import './App.css';
+import { useTonConnect } from './hooks/useTonConnect';
+import { useBackend } from './hooks/useBackend';
 
 function App() {
+  const { user } = useTonConnect();
+  const { gameState, sendAction } = useBackend();
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.tsx</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="game-container">
+      <div className="dealer-cards">
+        {gameState.dealerHand.map(card => (
+          <Card key={card} value={card} />
+        ))}
+      </div>
+
+      <div className="player-area">
+        <div className="cards">
+          {gameState.playerHand.map(card => (
+            <Card key={card} value={card} />
+          ))}
+        </div>
+        
+        <div className="controls">
+          <button onClick={() => sendAction('HIT')}>Hit</button>
+          <button onClick={() => sendAction('STAND')}>Stand</button>
+          <button onClick={() => sendAction('DOUBLE')}>Double</button>
+        </div>
+      </div>
+
+      <div className="balance">
+        Balance: {gameState.playerBalance} 
+        <button onClick={openDepositModal}>Deposit</button>
+      </div>
     </div>
   );
 }
-
-export default App;
