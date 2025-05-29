@@ -46,56 +46,43 @@ function renderCard(cardInstance, handDiv, isDealerHidden = false, isSmall = fal
     handDiv.appendChild(cardDiv);
 }
 
-/**
- * Renders a player's hand or the dealer's hand.
- * @param {Hand} handInstance - Client-side Hand object.
- * @param {HTMLElement} handDiv - The DOM element for displaying cards.
- * @param {boolean} isDealer - True if this is the dealer's hand.
- * @param {boolean} hideFirstCard - True to hide dealer's first card.
- * @param {boolean} isSmall - True for smaller cards (other players).
- */
 function renderPlayerOrDealerHand(handInstance, handDiv, isDealer = false, hideFirstCard = false, isSmall = false) {
     handDiv.innerHTML = ''; 
     const cards = handInstance.getCards();
     for (let i = 0; i < cards.length; i++) {
         const card = cards[i];
-        // For dealer, hideFirstCard applies to the card at index 0.
-        // For other players, or self, hideFirstCard is typically false.
         const actuallyHideThisCard = isDealer && hideFirstCard && i === 0;
         renderCard(card, handDiv, actuallyHideThisCard, isSmall);
     }
 }
 
-
 function displayMessage(message) {
     if(gameMessagesDiv) gameMessagesDiv.textContent = message;
 }
 
-/**
- * Updates button states based on game phase and player turn.
- * @param {string} gameState - Current game state from server.
- * @param {string|null} currentTurnSocketId - Socket ID of the player whose turn it is.
- * @param {string} mySocketId - Socket ID of the current client.
- * @param {boolean} amIReadyForNewRound - Client's own ready status.
- * @param {string} myPlayerTableStatus - Client's own status at the table ('betting', 'betPlaced', 'playing', etc.)
- */
 function updateMultiplayerButtonStates(gameState, currentTurnSocketId, mySocketId, amIReadyForNewRound, myPlayerTableStatus) {
-    const isMyTurn = currentTurnSocketId === mySocketId && myPlayerTableStatus === 'playing';
-    const canBet = gameState === 'betting' && myPlayerTableStatus === 'betting';
+    const isMyTurnNow = currentTurnSocketId === mySocketId && myPlayerTableStatus === 'playing';
+    const canBetNow = gameState === 'betting' && myPlayerTableStatus === 'betting';
     
-    if (hitButton) hitButton.disabled = !isMyTurn;
-    if (standButton) standButton.disabled = !isMyTurn;
+    if (hitButton) hitButton.disabled = !isMyTurnNow;
+    if (standButton) standButton.disabled = !isMyTurnNow;
     
-    if (placeBetButton) placeBetButton.disabled = !canBet;
-    if (betAmountInput) betAmountInput.disabled = !canBet;
+    if (placeBetButton) placeBetButton.disabled = !canBetNow;
+    if (betAmountInput) betAmountInput.disabled = !canBetNow;
 
     if (newRoundButton) {
         const showNewRoundButton = (gameState === 'roundOver' && !amIReadyForNewRound) || 
                                    (gameState === 'waitingForPlayers' && !amIReadyForNewRound);
         newRoundButton.style.display = showNewRoundButton ? 'inline-block' : 'none';
         newRoundButton.disabled = amIReadyForNewRound; 
-    }
+    } else { console.warn("newRoundButton not found in UI for state update."); }
 
+    if (gameState === 'dealerTurn' || gameState === 'roundOver' || gameState === 'dealing') { 
+        if (hitButton) hitButton.disabled = true;
+        if (standButton) standButton.disabled = true;
+        if (placeBetButton) placeBetButton.disabled = true; // Also disable betting buttons
+        if (betAmountInput) betAmountInput.disabled = true;
+    }
     if (topupButton) topupButton.disabled = false; 
 }
 
@@ -111,58 +98,112 @@ function updateTableId(tableId){
     if(tableIdDisplay) tableIdDisplay.textContent = tableId || "N/A";
 }
 
-function renderPlayers(playersData, mySocketId) {
+function renderPlayers(playersData, mySocketId, currentPlayerSocketId) { // Added currentPlayerSocketId
     if (!otherPlayersContainer) return;
-    otherPlayersContainer.innerHTML = ''; 
+    // No full clear here, addPlayerToUI will handle updates or creation
     for (const socketId in playersData) {
         if (socketId === mySocketId) continue; 
-        addPlayerToUI(playersData[socketId]);
+        addPlayerToUI(playersData[socketId], false, socketId === currentPlayerSocketId);
     }
 }
 
-function addPlayerToUI(playerData) {
-    if (!otherPlayersContainer) return;
-    let playerBox = document.getElementById(`player-${playerData.id}`); 
-    if (!playerBox) {
-        playerBox = document.createElement('div');
-        playerBox.id = `player-${playerData.id}`;
-        playerBox.classList.add('player-box');
-        if (playerData.isCurrentTurn) playerBox.classList.add('current-turn'); // For highlighting current player
+function addPlayerToUI(playerData, isSelf = false, isCurrentTurn = false) {
+    const container = isSelf ? playerHandDiv.parentElement : otherPlayersContainer;
+    if (!container && !isSelf) return; 
 
-        playerBox.innerHTML = `
-            <h4 id="player-name-${playerData.id}"></h4>
-            <p id="player-status-${playerData.id}"></p>
-            <p id="player-balance-display-${playerData.id}"></p>
-            <p>Bet: <span id="player-bet-${playerData.id}">0</span></p>
-            <p class="ready-status" id="player-ready-${playerData.id}" style="display:none; color: green; font-weight: bold;">Ready!</p>
-            <div class="hand-display" id="player-hand-${playerData.id}"></div>
-            <p>Score: <span id="player-other-score-${playerData.id}">0</span></p> 
-        `;
-        otherPlayersContainer.appendChild(playerBox);
-    } else {
-        // Toggle current-turn highlight
-         if (playerData.isCurrentTurn) playerBox.classList.add('current-turn');
-         else playerBox.classList.remove('current-turn');
+    let playerBoxIdSuffix = playerData.id; 
+    let playerBox;
+
+    if (isSelf) { 
+        playerBox = playerHandDiv.parentElement; 
+        const myClientHand = new Hand(playerData.hand?.cards || []);
+        renderPlayerOrDealerHand(myClientHand, playerHandDiv, false, false, false);
+        if(playerScoreDiv) playerScoreDiv.textContent = `Score: ${playerData.score || 0}`;
+        if(playerUsernameDisplay) playerUsernameDisplay.textContent = playerData.username || "You";
+        // Display outcome for self near their hand/score area
+        let outcomeEl = document.getElementById('self-player-outcome');
+        if (!outcomeEl && playerBox) {
+            outcomeEl = document.createElement('p');
+            outcomeEl.id = 'self-player-outcome';
+            outcomeEl.className = 'player-outcome';
+            // Insert after player-score div
+            const scoreDisplay = document.getElementById('player-score');
+            if(scoreDisplay && scoreDisplay.parentNode === playerBox) {
+                 scoreDisplay.parentNode.insertBefore(outcomeEl, scoreDisplay.nextSibling);
+            } else {
+                 playerBox.appendChild(outcomeEl); // Fallback append
+            }
+        }
+        if(outcomeEl) {
+            outcomeEl.textContent = playerData.outcome || '';
+            outcomeEl.className = 'player-outcome ' + (playerData.outcome?.includes('Win') ? 'win' : playerData.outcome?.includes('Lost') || playerData.outcome?.includes('Bust') ? 'loss' : playerData.outcome?.includes('Push') ? 'push' : '');
+        }
+
+
+    } else { 
+        playerBox = document.getElementById(`player-${playerBoxIdSuffix}`);
+        if (!playerBox) {
+            playerBox = document.createElement('div');
+            playerBox.id = `player-${playerBoxIdSuffix}`;
+            playerBox.classList.add('player-box');
+            
+            playerBox.innerHTML = `
+                <h4 id="player-name-${playerBoxIdSuffix}"></h4>
+                <p id="player-status-${playerBoxIdSuffix}"></p>
+                <p id="player-balance-display-${playerBoxIdSuffix}"></p>
+                <p>Bet: <span id="player-bet-${playerBoxIdSuffix}">0</span></p>
+                <p class="ready-status" id="player-ready-${playerBoxIdSuffix}" style="display:none; color: green; font-weight: bold;">Ready!</p>
+                <div class="hand-display" id="player-hand-${playerBoxIdSuffix}"></div>
+                <p>Score: <span id="player-other-score-${playerBoxIdSuffix}">0</span></p> 
+                <p class="player-outcome" id="player-outcome-${playerBoxIdSuffix}"></p>
+            `;
+            if(otherPlayersContainer) otherPlayersContainer.appendChild(playerBox);
+        }
+    }
+    
+    // Update common details
+    const nameEl = isSelf ? null : document.getElementById(`player-name-${playerBoxIdSuffix}`);
+    const statusEl = isSelf ? null : document.getElementById(`player-status-${playerBoxIdSuffix}`);
+    const balanceEl = isSelf ? null : document.getElementById(`player-balance-display-${playerBoxIdSuffix}`);
+    const betEl = isSelf ? null : document.getElementById(`player-bet-${playerBoxIdSuffix}`);
+    const readyEl = isSelf ? null : document.getElementById(`player-ready-${playerBoxIdSuffix}`);
+    const handDisplayEl = isSelf ? playerHandDiv : document.getElementById(`player-hand-${playerBoxIdSuffix}`); // For self, use main playerHandDiv
+    const otherScoreEl = isSelf ? playerScoreDiv : document.getElementById(`player-other-score-${playerBoxIdSuffix}`); // For self, use main playerScoreDiv
+    const outcomeDisplayEl = isSelf ? document.getElementById('self-player-outcome') : document.getElementById(`player-outcome-${playerBoxIdSuffix}`);
+
+
+    if(nameEl) nameEl.textContent = playerData.username || 'Player';
+    if(statusEl) {
+        statusEl.textContent = `Status: ${playerData.status || 'N/A'}`;
+        if (playerData.status === 'bust') statusEl.innerHTML = `Status: <strong style="color:red;">BUST</strong>`;
+        if (playerData.status === 'stood') statusEl.innerHTML = `Status: <strong style="color:blue;">STOOD</strong>`;
+        if (playerData.status === 'blackjack') statusEl.innerHTML = `Status: <strong style="color:gold;">BLACKJACK!</strong>`;
+    }
+    if(balanceEl) balanceEl.textContent = `Bal: ${playerData.balance !== undefined ? playerData.balance : 'N/A'}`;
+    if(betEl) betEl.textContent = playerData.bet || 0;
+    
+    if(readyEl) readyEl.style.display = playerData.isReady ? 'block' : 'none';
+
+    if (handDisplayEl) {
+        const handToRender = new Hand(playerData.hand?.cards || []);
+        renderPlayerOrDealerHand(handToRender, handDisplayEl, false, false, !isSelf); // isSmall = !isSelf
+        if(otherScoreEl) otherScoreEl.textContent = (isSelf ? `Score: ${playerData.score || 0}` : playerData.score || 0);
     }
 
-    document.getElementById(`player-name-${playerData.id}`).textContent = playerData.username || 'Player';
-    document.getElementById(`player-status-${playerData.id}`).textContent = `Status: ${playerData.status || 'N/A'}`;
-    document.getElementById(`player-balance-display-${playerData.id}`).textContent = `Bal: ${playerData.balance !== undefined ? playerData.balance : 'N/A'}`;
-    document.getElementById(`player-bet-${playerData.id}`).textContent = playerData.bet || 0;
-    
-    const readyStatusEl = document.getElementById(`player-ready-${playerData.id}`);
-    if (playerData.isReady && readyStatusEl) readyStatusEl.style.display = 'block';
-    else if(readyStatusEl) readyStatusEl.style.display = 'none';
+    if(outcomeDisplayEl) {
+        outcomeDisplayEl.textContent = playerData.outcome || '';
+        // Basic outcome styling
+        outcomeDisplayEl.className = 'player-outcome ' + (playerData.outcome?.includes('Win') ? 'win' : playerData.outcome?.includes('Lost') || playerData.outcome?.includes('Bust') ? 'loss' : playerData.outcome?.includes('Push') ? 'push' : '');
+    }
 
-    const handDiv = document.getElementById(`player-hand-${playerData.id}`);
-    const scoreSpan = document.getElementById(`player-other-score-${playerData.id}`);
-    if (playerData.hand && handDiv) {
-        const otherPlayerHand = new Hand(playerData.hand.cards || []); // Reconstruct Hand for rendering
-        renderPlayerOrDealerHand(otherPlayerHand, handDiv, false, false, true); 
-        if(scoreSpan) scoreSpan.textContent = playerData.score || 0;
-    } else if (handDiv) {
-        handDiv.innerHTML = ''; 
-        if(scoreSpan) scoreSpan.textContent = 0;
+
+    // Highlight current turn
+    if (!isSelf && playerBox) {
+        if (isCurrentTurn) playerBox.classList.add('current-turn-highlight');
+        else playerBox.classList.remove('current-turn-highlight');
+    } else if (isSelf && playerBox) { // For self main area
+         if (isCurrentTurn) playerBox.classList.add('current-turn-highlight');
+         else playerBox.classList.remove('current-turn-highlight');
     }
 }
 
@@ -172,21 +213,21 @@ function removePlayerFromUI(socketId) {
 }
 
 function updatePlayerReadyStatusUI(socketId, username, isReady) {
-    let playerBox = document.getElementById(`player-${socketId}`);
-    const selfPlayer = blackjack.myPlayerData; // Assuming blackjack.myPlayerData is accessible
+    const selfPlayer = blackjack.myPlayerData; 
 
     if (socketId === selfPlayer?.socketId) { 
         if (newRoundButton) {
             newRoundButton.textContent = isReady ? "Waiting..." : "Start New Round";
             newRoundButton.disabled = isReady;
         }
-        selfPlayer.isReady = isReady; // Update local state
+        if(selfPlayer) selfPlayer.isReady = isReady;
         return;
     }
     
+    let playerBox = document.getElementById(`player-${socketId}`);
     if (!playerBox && otherPlayersContainer && username) { 
-        addPlayerToUI({id: socketId, username: username, isReady: isReady, hand: {cards:[]}, bet:0, balance: 'N/A', status:'connected'});
-        playerBox = document.getElementById(`player-${socketId}`);
+        addPlayerToUI({id: socketId, username: username, isReady: isReady, hand: {cards:[]}, bet:0, balance: 'N/A', status:'connected'}, false, false);
+        playerBox = document.getElementById(`player-${socketId}`); // try to get it again
     }
     
     const readyStatusEl = document.getElementById(`player-ready-${socketId}`);
@@ -196,32 +237,27 @@ function updatePlayerReadyStatusUI(socketId, username, isReady) {
         const newReadyStatusEl = document.createElement('p');
         newReadyStatusEl.id = `player-ready-${socketId}`;
         newReadyStatusEl.className = 'ready-status';
-        newReadyStatusEl.style.color = 'green';
-        newReadyStatusEl.style.fontWeight = 'bold';
+        newReadyStatusEl.style.color = 'green'; newReadyStatusEl.style.fontWeight = 'bold';
         newReadyStatusEl.textContent = 'Ready!';
         playerBox.appendChild(newReadyStatusEl);
     }
 }
 
-// Function to highlight the current player
-function highlightCurrentPlayer(currentPlayerSocketId, allPlayersData, my SocketId) {
-    for (const socketId in allPlayersData) {
+function highlightCurrentPlayer(currentPlayerSocketId, mySocketId) { 
+    for (const socketId in localPlayersData) { // localPlayersData from app.js scope
+        if (socketId === mySocketId) continue; // Skip self for otherPlayersContainer
         const playerBox = document.getElementById(`player-${socketId}`);
-        if (playerBox) { // Only for other players' boxes
-            if (socketId === currentPlayerSocketId) {
-                playerBox.classList.add('current-turn-highlight');
-            } else {
-                playerBox.classList.remove('current-turn-highlight');
-            }
+        if (playerBox) { 
+            if (socketId === currentPlayerSocketId) playerBox.classList.add('current-turn-highlight');
+            else playerBox.classList.remove('current-turn-highlight');
         }
     }
-    // For self, maybe a message or a highlight on their main hand area
     const mainPlayerArea = document.getElementById('player-area');
     if (mainPlayerArea) {
-        if (currentPlayerSocketId === my SocketId) {
-             mainPlayerArea.classList.add('current-turn-highlight');
-        } else {
-             mainPlayerArea.classList.remove('current-turn-highlight');
-        }
+        if (currentPlayerSocketId === mySocketId) mainPlayerArea.classList.add('current-turn-highlight');
+        else mainPlayerArea.classList.remove('current-turn-highlight');
     }
 }
+
+// Ensure CSS has .current-turn-highlight { border: 2px solid yellow; /* or similar */ }
+// And .player-outcome.win { color: green; } .player-outcome.loss { color: red; } .player-outcome.push { color: blue; }
